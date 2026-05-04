@@ -2,5 +2,6 @@ public enum DispatchMode
 {
     FCFS,
     ShortestDistance,
-    PriorityFirst
+    PriorityFirst,
+    AIScore
 }

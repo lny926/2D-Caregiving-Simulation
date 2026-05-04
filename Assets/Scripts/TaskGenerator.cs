@@ -11,13 +11,20 @@ public class TimeWindowTaskSettings
     public int startHour;
     public int endHour;
 
-    [Header("Generation Settings")]
-    public float spawnInterval = 5f;
+    [Header("Random Spawn Interval")]
+    public float minSpawnInterval = 8f;
+    public float maxSpawnInterval = 12f;
 
     [Header("Task Type Weights")]
     public int lightWeight = 50;
     public int mediumWeight = 30;
     public int heavyWeight = 20;
+
+    [Header("Task Count Weights Per Burst")]
+    public int oneTaskWeight = 50;
+    public int twoTaskWeight = 30;
+    public int threeTaskWeight = 15;
+    public int fourTaskWeight = 5;
 }
 
 public class TaskGenerator : MonoBehaviour
@@ -37,6 +44,12 @@ public class TaskGenerator : MonoBehaviour
     public TimeWindowTaskSettings eveningSettings;
 
     private float timer = 0f;
+    private float nextSpawnInterval = 5f;
+
+    void Start()
+    {
+        ScheduleNextSpawn();
+    }
 
     void Update()
     {
@@ -44,15 +57,22 @@ public class TaskGenerator : MonoBehaviour
         if (TimeManager.Instance == null) return;
         if (TaskManager.Instance == null) return;
 
-        TimeWindowTaskSettings currentWindow = GetCurrentWindowSettings();
-        float interval = currentWindow.spawnInterval;
-
         timer += Time.deltaTime;
 
-        if (timer >= interval)
+        if (timer >= nextSpawnInterval)
         {
             timer = 0f;
-            TryGenerateTask(currentWindow);
+
+            TimeWindowTaskSettings currentWindow = GetCurrentWindowSettings();
+
+            int taskCount = GetWeightedTaskCount(currentWindow);
+
+            for (int i = 0; i < taskCount; i++)
+            {
+                TryGenerateTask(currentWindow);
+            }
+
+            ScheduleNextSpawn();
         }
     }
 
@@ -60,6 +80,7 @@ public class TaskGenerator : MonoBehaviour
     public void ResetGenerator()
     {
         timer = 0f;
+        ScheduleNextSpawn();
     }
 
     // 获取当前时间段配置
@@ -144,6 +165,55 @@ public class TaskGenerator : MonoBehaviour
         else
         {
             return TaskType.Heavy;
+        }
+    }
+
+    private void ScheduleNextSpawn()
+    {
+        TimeWindowTaskSettings currentWindow = GetCurrentWindowSettings();
+
+        if (currentWindow == null)
+        {
+            nextSpawnInterval = 8f;
+            return;
+        }
+
+        float min = Mathf.Min(currentWindow.minSpawnInterval, currentWindow.maxSpawnInterval);
+        float max = Mathf.Max(currentWindow.minSpawnInterval, currentWindow.maxSpawnInterval);
+
+        nextSpawnInterval = Random.Range(min, max);
+    }
+
+    private int GetWeightedTaskCount(TimeWindowTaskSettings settings)
+    {
+        int totalWeight =
+            settings.oneTaskWeight +
+            settings.twoTaskWeight +
+            settings.threeTaskWeight +
+            settings.fourTaskWeight;
+
+        if (totalWeight <= 0)
+        {
+            return 1;
+        }
+
+        int randomValue = Random.Range(0, totalWeight);
+
+        if (randomValue < settings.oneTaskWeight)
+        {
+            return 1;
+        }
+        else if (randomValue < settings.oneTaskWeight + settings.twoTaskWeight)
+        {
+            return 2;
+        }
+        else if (randomValue < settings.oneTaskWeight + settings.twoTaskWeight + settings.threeTaskWeight)
+        {
+            return 3;
+        }
+        else
+        {
+            return 4;
         }
     }
 

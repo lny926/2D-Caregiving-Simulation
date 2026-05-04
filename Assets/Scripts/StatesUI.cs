@@ -32,6 +32,19 @@ public class StatsUI : MonoBehaviour
             "Light Tasks: " + stats.lightTaskCount + "\n" +
             "Medium Tasks: " + stats.mediumTaskCount + "\n" +
             "Heavy Tasks: " + stats.heavyTaskCount + "\n\n" +
-            "Total Distance: " + stats.totalDistanceTraveled.ToString("F1");
+            "Escalations: " + StatsManager.Instance.escalationCount + "\n\n" +
+            "Total Distance: " + stats.totalDistanceTraveled.ToString("F1") + "\n" +
+            "Routine Created: " + stats.routineTaskCreated + "\n" +
+            "Routine Completed: " + stats.routineTaskCompleted + "\n" +
+            "Max Waiting Time: " + stats.maxWaitingTime.ToString("F1") + " s\n" +
+            "P95 Waiting Time: " + stats.GetP95WaitingTime().ToString("F1") + " s\n" +
+            "Escalations: " + stats.escalationCount + "\n" +
+            "Light -> Medium: " + stats.lightToMediumEscalation + "\n" +
+            "Medium -> Heavy: " + stats.mediumToHeavyEscalation + "\n" +
+            "Heavy Secondary: " + stats.heavySecondaryCallCount + "\n" +
+            "Completion Rate: " + (stats.GetCompletionRate() * 100f).ToString("F1") + "%\n";
+
+
+
     }
 }

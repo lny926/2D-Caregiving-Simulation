@@ -7,7 +7,8 @@ using UnityEngine;
         Idle,
         MovingToRoom,
         Working,
-        Returning
-    }
+        Returning,
+        Resting
+}
 
   

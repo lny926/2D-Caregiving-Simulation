@@ -19,8 +19,17 @@ public class TaskManager : MonoBehaviour
     [Header("Task Generator")]
     public TaskGenerator taskGenerator;
 
+    [Header("AI Score Weights")]
+    public float distanceWeight = 1.0f;
+    public float fatigueWeight = 20.0f;
+    public float priorityWeight = 10.0f;
+    public float waitingTimeWeight = 1.0f;
+
     // 待处理任务列表
     private List<RoomTask> pendingTasks = new List<RoomTask>();
+
+    // Routine 任务队列（Medication）
+    private List<RoomRoutineTask> pendingRoutineTasks = new List<RoomRoutineTask>();
 
     private void Awake()
     {
@@ -56,6 +65,34 @@ public class TaskManager : MonoBehaviour
                   " | Pending Count: " + pendingTasks.Count);
 
         TryAssignNextTask();
+    }
+
+    public void AddRoutineTask(RoomRoutineTask routineTask)
+    {
+        if (routineTask == null) return;
+
+        if (pendingRoutineTasks.Contains(routineTask))
+        {
+            Debug.Log("Routine task already in queue: " + routineTask.roomID);
+            return;
+        }
+
+        pendingRoutineTasks.Add(routineTask);
+
+        if (StatsManager.Instance != null)
+        {
+            StatsManager.Instance.RegisterRoutineTaskCreated();
+        }
+
+        Debug.Log("Routine task added to queue: " + routineTask.roomID +
+                  " | Pending Routine Count: " + pendingRoutineTasks.Count);
+
+        TryAssignNextTask();
+    }
+
+    public int GetPendingRoutineTaskCount()
+    {
+        return pendingRoutineTasks.Count;
     }
 
     // 自动生成器调用：创建指定类型任务
@@ -110,7 +147,7 @@ public class TaskManager : MonoBehaviour
     {
         foreach (NurseAction n in nurses)
         {
-            if (n != null && n.IsIdle())
+            if (n != null && n.IsAvailable())
             {
                 return n;
             }
@@ -143,7 +180,8 @@ public class TaskManager : MonoBehaviour
 
         if (pendingTasks.Count == 0)
         {
-            Debug.Log("No pending tasks.");
+            Debug.Log("No normal pending tasks. Trying routine tasks...");
+            TryAssignNextRoutineTask();
             return;
         }
 
@@ -164,6 +202,10 @@ public class TaskManager : MonoBehaviour
 
             case DispatchMode.ShortestDistance:
                 SelectBestShortestDistancePair(out selectedNurse, out selectedTask);
+                break;
+
+            case DispatchMode.AIScore:
+                SelectBestAIScorePair(out selectedNurse, out selectedTask);
                 break;
 
             default:
@@ -231,7 +273,7 @@ public class TaskManager : MonoBehaviour
 
         foreach (NurseAction nurse in nurses)
         {
-            if (nurse == null || !nurse.IsIdle()) continue;
+            if (nurse == null || !nurse.IsAvailable()) continue;
 
             foreach (RoomTask task in pendingTasks)
             {
@@ -250,6 +292,56 @@ public class TaskManager : MonoBehaviour
         }
     }
 
+    // AI Score：综合距离、疲劳、任务优先级、等待时间
+    private void SelectBestAIScorePair(out NurseAction bestNurse, out RoomTask bestTask)
+    {
+        bestNurse = null;
+        bestTask = null;
+
+        float bestScore = float.MaxValue;
+
+        foreach (NurseAction nurse in nurses)
+        {
+            if (nurse == null || !nurse.IsAvailable()) continue;
+
+            foreach (RoomTask task in pendingTasks)
+            {
+                if (task == null || task.goPath == null || task.goPath.Count == 0) continue;
+
+                float score = CalculateAIScore(nurse, task);
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestNurse = nurse;
+                    bestTask = task;
+                }
+            }
+        }
+    }
+
+    private float CalculateAIScore(NurseAction nurse, RoomTask task)
+    {
+        Transform roomTarget = task.goPath[task.goPath.Count - 1];
+
+        float distance = Vector3.Distance(nurse.transform.position, roomTarget.position);
+
+        float fatigue = nurse.fatigue;
+
+        int priority = GetTaskPriority(task.currentTaskType);
+
+        float waitingTime = task.waitingTime;
+
+        // score 越低越优
+        float score =
+            distanceWeight * distance +
+            fatigueWeight * fatigue -
+            priorityWeight * priority -
+            waitingTimeWeight * waitingTime;
+
+        return score;
+    }
+
     private int GetTaskPriority(TaskType type)
     {
         switch (type)
@@ -265,6 +357,40 @@ public class TaskManager : MonoBehaviour
         }
     }
 
+    private RoomRoutineTask SelectNextRoutineTask()
+    {
+        if (pendingRoutineTasks.Count == 0) return null;
+
+        return pendingRoutineTasks[0];
+    }
+
+    private void TryAssignNextRoutineTask()
+    {
+        if (pendingRoutineTasks.Count == 0) return;
+
+        NurseAction idleNurse = GetFirstIdleNurse();
+
+        if (idleNurse == null)
+        {
+            return;
+        }
+
+        RoomRoutineTask routineTask = SelectNextRoutineTask();
+
+        if (routineTask == null)
+        {
+            return;
+        }
+
+        pendingRoutineTasks.Remove(routineTask);
+
+        idleNurse.AssignRoutineTask(routineTask);
+
+        Debug.Log("Assigned routine medication task: " + routineTask.roomID +
+                  " | Nurse: " + idleNurse.name +
+                  " | Remaining Routine Tasks: " + pendingRoutineTasks.Count);
+    }
+
     // 给外部调试用：查看当前待处理任务数
     public int GetPendingTaskCount()
     {
@@ -278,6 +404,9 @@ public class TaskManager : MonoBehaviour
 
         // 1. 清空待处理任务
         pendingTasks.Clear();
+
+        // 清空 Routine 任务
+        pendingRoutineTasks.Clear();
 
         // 2. 重置所有房间
         foreach (RoomTask room in allRooms)
@@ -320,5 +449,12 @@ public class TaskManager : MonoBehaviour
         }
 
         Debug.Log("Simulation reset complete.");
+
+        // 8. 重置 Routine Task
+        if (RoutineTaskManager.Instance != null)
+        {
+            RoutineTaskManager.Instance.ResetRoutineTaskManager();
+        }
     }
 }
+

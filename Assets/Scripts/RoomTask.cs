@@ -14,39 +14,27 @@ public class RoomTask : MonoBehaviour
     public Color heavyTaskColor = Color.red;
 
     [Header("路径设置")]
-    // 去程路径：手动拖拽
     public List<Transform> goPath = new List<Transform>();
-
-    // 是否自动生成返回路径
     public bool autoGenerateReturnPath = true;
-
-    // 自动生成时，是否移除房间点
     public bool removeRoomPointFromReturn = true;
-
-    // 手动返回路径
     public List<Transform> manualReturnPath = new List<Transform>();
-
-    // 护士站点
-    public Transform nurseStationPoint;
 
     [Header("任务状态")]
     public bool hasTask = false;
-
-    // 当前任务类型
     public TaskType currentTaskType;
-
-    // 当前任务持续时间
     public float taskDuration = 0f;
+    public float waitingTime = 0f;
+    public bool isBeingHandled = false;
 
-    [Header("升级机制")]
-    // 升级阈值（秒），Inspector 可调
+    [Header("Escalation Settings")]
+    public float minEscalationMinutes = 8f;
+    public float maxEscalationMinutes = 12f;
+
+    // 当前任务本轮升级阈值，单位：现实秒
     public float escalationThreshold = 30f;
 
-    // 当前任务已经等待了多久
-    public float waitingTime = 0f;
-
-    // 当前任务是否正在被处理
-    public bool isBeingHandled = false;
+    // 防止 Heavy 任务反复触发 secondary call
+    private bool heavySecondaryCallTriggered = false;
 
     private void Start()
     {
@@ -55,15 +43,10 @@ public class RoomTask : MonoBehaviour
 
     private void Update()
     {
-        // 只有“有任务且还没被处理”时，才继续等待、变色、升级
         if (hasTask && !isBeingHandled)
         {
             waitingTime += Time.deltaTime;
-
-            // 每帧更新颜色渐变
             UpdateTaskColorByProgress();
-
-            // 检查是否需要升级
             CheckEscalation();
         }
     }
@@ -78,12 +61,14 @@ public class RoomTask : MonoBehaviour
         }
     }
 
-    // 创建随机任务（保留给手动点击用）
     public void CreateTask()
     {
         hasTask = true;
         isBeingHandled = false;
         waitingTime = 0f;
+        heavySecondaryCallTriggered = false;
+
+        GenerateEscalationThreshold();
 
         int randomValue = Random.Range(0, 100);
 
@@ -102,45 +87,135 @@ public class RoomTask : MonoBehaviour
 
         Debug.Log("Room task created: " + roomID +
                   " | Type: " + currentTaskType +
-                  " | Duration: " + taskDuration);
+                  " | Duration: " + taskDuration.ToString("F2") +
+                  " | Escalation Threshold: " + escalationThreshold.ToString("F2"));
     }
 
-    // 创建指定类型任务（给自动生成器用）
     public void CreateTask(TaskType forcedType)
     {
         hasTask = true;
         isBeingHandled = false;
         waitingTime = 0f;
+        heavySecondaryCallTriggered = false;
 
+        GenerateEscalationThreshold();
         SetTaskType(forcedType);
 
         Debug.Log("Room task created: " + roomID +
                   " | Type: " + currentTaskType +
-                  " | Duration: " + taskDuration);
+                  " | Duration: " + taskDuration.ToString("F2") +
+                  " | Escalation Threshold: " + escalationThreshold.ToString("F2"));
     }
 
-    // 根据任务类型设置持续时间和颜色
     private void SetTaskType(TaskType type)
     {
         currentTaskType = type;
+        taskDuration = GetRandomTaskDuration(type);
+        ApplyCurrentTaskBaseColor();
+    }
+
+    private float GetRandomTaskDuration(TaskType type)
+    {
+        float minMinutes = 0f;
+        float maxMinutes = 0f;
 
         switch (type)
         {
             case TaskType.Light:
-                taskDuration = 5f;
-                ApplyCurrentTaskBaseColor();
+                minMinutes = 2f;
+                maxMinutes = 5f;
                 break;
 
             case TaskType.Medium:
-                taskDuration = 10f;
-                ApplyCurrentTaskBaseColor();
+                minMinutes = 6f;
+                maxMinutes = 15f;
                 break;
 
             case TaskType.Heavy:
-                taskDuration = 15f;
-                ApplyCurrentTaskBaseColor();
+                minMinutes = 12f;
+                maxMinutes = 30f;
                 break;
         }
+
+        float randomMinutes = Random.Range(minMinutes, maxMinutes);
+
+        if (TimeManager.Instance != null)
+        {
+            return randomMinutes * 60f / TimeManager.Instance.timeScale;
+        }
+
+        return randomMinutes * 60f;
+    }
+
+    private void GenerateEscalationThreshold()
+    {
+        float randomMinutes = Random.Range(minEscalationMinutes, maxEscalationMinutes);
+
+        if (TimeManager.Instance != null)
+        {
+            escalationThreshold = randomMinutes * 60f / TimeManager.Instance.timeScale;
+        }
+        else
+        {
+            escalationThreshold = randomMinutes * 60f;
+        }
+
+        Debug.Log(roomID + " escalation threshold set to " +
+                  randomMinutes.ToString("F1") + " simulated minutes");
+    }
+
+    private void CheckEscalation()
+    {
+        if (waitingTime < escalationThreshold) return;
+
+        if (currentTaskType == TaskType.Light)
+        {
+            currentTaskType = TaskType.Medium;
+            taskDuration = GetRandomTaskDuration(TaskType.Medium);
+
+            waitingTime = 0f;
+            GenerateEscalationThreshold();
+
+            if (StatsManager.Instance != null)
+            {
+                StatsManager.Instance.RegisterLightToMediumEscalation();
+            }
+
+            Debug.Log("Secondary Call: " + roomID + " Light -> Medium");
+        }
+        else if (currentTaskType == TaskType.Medium)
+        {
+            currentTaskType = TaskType.Heavy;
+            taskDuration = GetRandomTaskDuration(TaskType.Heavy);
+
+            waitingTime = 0f;
+            GenerateEscalationThreshold();
+
+            if (StatsManager.Instance != null)
+            {
+                StatsManager.Instance.RegisterMediumToHeavyEscalation();
+            }
+
+            Debug.Log("Secondary Call: " + roomID + " Medium -> Heavy");
+        }
+        else if (currentTaskType == TaskType.Heavy)
+        {
+            if (!heavySecondaryCallTriggered)
+            {
+                heavySecondaryCallTriggered = true;
+
+                if (StatsManager.Instance != null)
+                {
+                    StatsManager.Instance.RegisterHeavySecondaryCall();
+                }
+
+                Debug.Log("Secondary Call: " + roomID + " Heavy task waiting too long");
+            }
+
+            waitingTime = escalationThreshold;
+        }
+
+        ApplyCurrentTaskBaseColor();
     }
 
     public void CompleteTask()
@@ -151,6 +226,8 @@ public class RoomTask : MonoBehaviour
         isBeingHandled = false;
         taskDuration = 0f;
         waitingTime = 0f;
+        heavySecondaryCallTriggered = false;
+
         SetNormalColor();
 
         if (StatsManager.Instance != null)
@@ -161,7 +238,6 @@ public class RoomTask : MonoBehaviour
         Debug.Log("Room task completed: " + roomID);
     }
 
-    // 根据当前任务类型设置基础颜色
     private void ApplyCurrentTaskBaseColor()
     {
         if (roomRenderer == null) return;
@@ -171,72 +247,37 @@ public class RoomTask : MonoBehaviour
             case TaskType.Light:
                 roomRenderer.color = lightTaskColor;
                 break;
+
             case TaskType.Medium:
                 roomRenderer.color = mediumTaskColor;
                 break;
+
             case TaskType.Heavy:
                 roomRenderer.color = heavyTaskColor;
                 break;
         }
     }
 
-    // 更新颜色渐变
     private void UpdateTaskColorByProgress()
     {
         if (roomRenderer == null) return;
 
-        // 进度 0~1
         float progress = Mathf.Clamp01(waitingTime / escalationThreshold);
 
         if (currentTaskType == TaskType.Light)
         {
-            // 绿色 -> 黄色
             roomRenderer.color = Color.Lerp(lightTaskColor, mediumTaskColor, progress);
         }
         else if (currentTaskType == TaskType.Medium)
         {
-            // 黄色 -> 红色
             roomRenderer.color = Color.Lerp(mediumTaskColor, heavyTaskColor, progress);
         }
         else if (currentTaskType == TaskType.Heavy)
         {
-            // Heavy 保持红色
             roomRenderer.color = heavyTaskColor;
         }
     }
 
-    // 检查是否升级
-    private void CheckEscalation()
-    {
-        if (waitingTime < escalationThreshold) return;
-
-        if (currentTaskType == TaskType.Light)
-        {
-            currentTaskType = TaskType.Medium;
-            taskDuration = 10f;
-            waitingTime = 0f; // 重置等待时间，开始下一轮 Medium -> Heavy 的倒计时
-
-            Debug.Log("任务升级: " + roomID + " Light -> Medium");
-        }
-        else if (currentTaskType == TaskType.Medium)
-        {
-            currentTaskType = TaskType.Heavy;
-            taskDuration = 15f;
-            waitingTime = 0f; // Heavy 不再升级，但重置也没问题
-
-            Debug.Log("任务升级: " + roomID + " Medium -> Heavy");
-        }
-        else if (currentTaskType == TaskType.Heavy)
-        {
-            // Heavy 不再升级
-            waitingTime = escalationThreshold;
-        }
-
-        // 升级后立刻更新基础颜色
-        ApplyCurrentTaskBaseColor();
-    }
-
-    // 恢复正常颜色
     public void SetNormalColor()
     {
         if (roomRenderer != null)
@@ -245,7 +286,6 @@ public class RoomTask : MonoBehaviour
         }
     }
 
-    // 获取返回路径
     public List<Transform> GetReturnPath()
     {
         List<Transform> finalReturnPath = new List<Transform>();
@@ -268,13 +308,13 @@ public class RoomTask : MonoBehaviour
         return finalReturnPath;
     }
 
-    // 强制重置房间任务状态
     public void ResetRoomTask()
     {
         hasTask = false;
         isBeingHandled = false;
         waitingTime = 0f;
         taskDuration = 0f;
+        heavySecondaryCallTriggered = false;
 
         SetNormalColor();
     }
